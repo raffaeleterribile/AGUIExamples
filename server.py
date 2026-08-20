@@ -1,8 +1,8 @@
+import asyncio
+import json
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio
-import json
 
 app = FastAPI()
 
