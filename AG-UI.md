@@ -1,7 +1,9 @@
 # AG-UI
 
 AG-UI è un protocollo che consente di costruire applicazioni agenti AI basate sul web con funzionalità avanzate come streaming in tempo reale, gestione dello stato e componenti interattivi dell'UI.  
-L'interfaccia visualizzata all'utente viene controllata dal server ed inviata in tempo reale al client tramite SSE (Server Side Events) via HTTP/HTTPS o webSocket.
+L'interfaccia visualizzata all'utente viene controllata dal server ed inviata in tempo reale al client tramite SSE (Server Side Events) via HTTP/HTTPS o webSocket.  
+AG-UI è principalmente un framework di frontend. Gli "agenti", in questo contesto, sono sostanzioalmente degli stub che puntano all'agente di backend e che elaborano gli eventi ricevuti dal backend.  
+L'implementazione di riferimento è fatta in React, ma esistono versioni in .Net, Python e Java.
 
 ## Struttura del protocollo
 Il protocollo usa tre endpoint:
@@ -76,6 +78,120 @@ Questo è l'elenco degli eventi:
 Esistono anche due eventi ausiliari:
 - TEXT_MESSAGE_CHUNK, invece di `TextMessageStart`/`TextMessageEnd`
 - TOOL_CALL_CHUNK, invece di `ToolCallStart`/`ToolCallEnd`
+
+## Agenti
+Il framework fornisce un componente chiamato `HttpAgent` ed è possibile creare agenti personalizzati ereditando dal componente `AbstractAgent`.
+
+### Agente predefinito
+```
+import { HttpAgent } from "@ag-ui/client"
+
+const agent = new HttpAgent({
+  url: "https://your-agent-endpoint.com/agent",
+  headers: {
+    Authorization: "Bearer your-api-key",
+  },
+})
+```
+
+### Agent personalizzato
+```
+import {
+  AbstractAgent,
+  RunAgent,
+  RunAgentInput,
+  EventType,
+  BaseEvent,
+} from "@ag-ui/client"
+import { Observable } from "rxjs"
+
+class SimpleAgent extends AbstractAgent {
+  run(input: RunAgentInput): RunAgent {
+    const { threadId, runId } = input
+
+    return () =>
+      new Observable<BaseEvent>((observer) => {
+        // Emit RUN_STARTED event
+        observer.next({
+          type: EventType.RUN_STARTED,
+          threadId,
+          runId,
+        })
+
+        // Send a message
+        const messageId = Date.now().toString()
+
+        // Message start
+        observer.next({
+          type: EventType.TEXT_MESSAGE_START,
+          messageId,
+          role: "assistant",
+        })
+
+        // Message content
+        observer.next({
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId,
+          delta: "Hello, world!",
+        })
+
+        // Message end
+        observer.next({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId,
+        })
+
+        // Emit RUN_FINISHED event
+        observer.next({
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId,
+        })
+
+        // Complete the observable
+        observer.complete()
+      })
+  }
+}
+```
+
+### Esempio di usi do un agente
+```
+// Create an agent instance
+const agent = new HttpAgent({
+  url: "https://your-agent-endpoint.com/agent",
+})
+
+// Add initial messages if needed
+agent.messages = [
+  {
+    id: "1",
+    role: "user",
+    content: "Hello, how can you help me today?",
+  },
+]
+
+// Run the agent
+agent
+  .runAgent({
+    runId: "run_123",
+    tools: [], // Optional tools
+    context: [], // Optional context
+  })
+  .subscribe({
+    next: (event) => {
+      // Handle different event types
+      switch (event.type) {
+        case EventType.TEXT_MESSAGE_CONTENT:
+          console.log("Content:", event.delta)
+          break
+        // Handle other events
+      }
+    },
+    error: (error) => console.error("Error:", error),
+    complete: () => console.log("Run complete"),
+  })
+```
 
 ## Tipi di componenti
 L'interfaccia per l'interazione con l'utente può essere costruita con i seguenti componenti.
