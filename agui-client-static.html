@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+	<meta charset="UTF-8" />
+	<title>AG-UI Client Static</title>
+	<style>
+		body {
+			font-family: sans-serif;
+			padding: 20px;
+		}
+
+		pre {
+			background: #eee;
+			padding: 10px;
+			max-height: 250px;
+			overflow: auto;
+		}
+
+		.panel {
+			border: 1px solid #ccc;
+			padding: 15px;
+			margin-top: 20px;
+		}
+
+		button {
+			margin-right: 10px;
+		}
+
+		select {
+			margin-left: 10px;
+		}
+	</style>
+	<!-- React via CDN -->
+	<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+	<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+</head>
+
+<body>
+	<div id="root"></div>
+
+	<script>
+		const { useState, useEffect } = React;
+
+		const COMPONENTS = [
+			"text", "buttons", "actions", "card", "list", "select",
+			"form", "checkbox", "grid", "table", "image", "modal",
+			"progress", "input", "file", "wizard"
+		];
+
+		function AGUIFakeRenderer({ event }) {
+			if (!event) return React.createElement("div", null, "Nessun evento AG-UI ancora ricevuto.");
+
+			const t = event.type;
+
+			if (t === "text") {
+				return React.createElement("div", null,
+					React.createElement("h3", null, "TEXT"),
+					React.createElement("p", null, event.text)
+				);
+			}
+
+			if (t === "actions") {
+				return React.createElement("div", null,
+					React.createElement("h3", null, "ACTIONS"),
+					event.actions.map(a =>
+						React.createElement("button", { key: a.id || a.label }, a.label)
+					)
+				);
+			}
+
+			if (t === "component") {
+				const comp = event.component;
+				const props = event.props || {};
+
+				if (comp === "buttons") {
+					return React.createElement("div", null,
+						React.createElement("h3", null, props.title || "Buttons"),
+						props.buttons?.map(b =>
+							React.createElement("button", { key: b.value }, b.label)
+						)
+					);
+				}
+
+				if (comp === "list") {
+					return React.createElement("div", null,
+						React.createElement("h3", null, props.title || "List"),
+						React.createElement("ul", null,
+							props.items?.map((i, idx) =>
+								React.createElement("li", { key: idx }, i)
+							)
+						)
+					);
+				}
+
+				if (comp === "card") {
+					return React.createElement("div", { className: "panel" },
+						React.createElement("h3", null, props.title || "Card"),
+						React.createElement("h4", null, props.subtitle || ""),
+						React.createElement("p", null, props.content || ""),
+						(props.actions || []).map(a =>
+							React.createElement("button", { key: a.value }, a.label)
+						)
+					);
+				}
+
+				if (comp === "select") {
+					return React.createElement("div", null,
+						React.createElement("h3", null, props.label || "Select"),
+						React.createElement("select", null,
+							props.options?.map(o =>
+								React.createElement("option", { key: o.value }, o.label)
+							)
+						)
+					);
+				}
+
+				if (comp === "table") {
+					const cols = props.columns || [];
+					const rows = props.rows || [];
+					return React.createElement("div", null,
+						React.createElement("h3", null, "Table"),
+						React.createElement("table", { border: 1, cellPadding: 4 },
+							React.createElement("thead", null,
+								React.createElement("tr", null,
+									cols.map(c =>
+										React.createElement("th", { key: c.id }, c.label)
+									)
+								)
+							),
+							React.createElement("tbody", null,
+								rows.map((r, idx) =>
+									React.createElement("tr", { key: idx },
+										cols.map(c =>
+											React.createElement("td", { key: c.id }, String(r[c.id]))
+										)
+									)
+								)
+							)
+						)
+					);
+				}
+
+				// fallback generico
+				return React.createElement("div", null,
+					React.createElement("h3", null, `Componente: ${comp}`),
+					React.createElement("pre", null, JSON.stringify(props, null, 2))
+				);
+			}
+
+			return React.createElement("div", null,
+				"Evento AG-UI non riconosciuto:",
+				React.createElement("pre", null, JSON.stringify(event, null, 2))
+			);
+		}
+
+		function App() {
+			const [events, setEvents] = useState([]);
+			const [currentEvent, setCurrentEvent] = useState(null);
+
+			useEffect(() => {
+				const es = new EventSource("http://localhost:8000/agent/events");
+
+				es.onmessage = (e) => {
+					if (e.data) {
+						try {
+							const json = JSON.parse(e.data);
+							setEvents(prev => [...prev, json]);
+							setCurrentEvent(json);
+						} catch (err) {
+							console.warn("Evento non valido:", e.data);
+						}
+					}
+				};
+
+				es.onerror = (err) => {
+					console.error("Errore SSE:", err);
+				};
+
+				return () => es.close();
+			}, []);
+
+			async function sendRun() {
+				await fetch("http://localhost:8000/agent/run", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ message: "Ciao agente!" })
+				});
+			}
+
+			async function sendEvent(value) {
+				await fetch("http://localhost:8000/agent/event", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ event: "action", value })
+				});
+			}
+
+			async function testAll() {
+				await sendRun();
+				for (const c of COMPONENTS) {
+					await sendEvent(c);
+					await new Promise(r => setTimeout(r, 800));
+				}
+			}
+
+			async function testSingle(c) {
+				if (!c) return;
+				await sendRun();
+				await new Promise(r => setTimeout(r, 300));
+				await sendEvent(c);
+			}
+
+			return React.createElement("div", null,
+				React.createElement("h1", null, "AG-UI Client Static (React via CDN)"),
+
+				React.createElement("div", { className: "panel" },
+					React.createElement("button", { onClick: testAll }, "Test automatico"),
+					React.createElement("select", {
+						defaultValue: "",
+						onChange: (e) => testSingle(e.target.value)
+					},
+						React.createElement("option", { value: "", disabled: true }, "Test singolo componente"),
+						COMPONENTS.map(c =>
+							React.createElement("option", { key: c, value: c }, c)
+						)
+					)
+				),
+
+				React.createElement("div", { className: "panel" },
+					React.createElement("h2", null, "Eventi ricevuti"),
+					React.createElement("pre", null, JSON.stringify(events, null, 2))
+				),
+
+				React.createElement("div", { className: "panel" },
+					React.createElement("h2", null, "Rendering AG-UI (simulato)"),
+					React.createElement(AGUIFakeRenderer, { event: currentEvent })
+				)
+			);
+		}
+
+		ReactDOM.createRoot(document.getElementById("root")).render(
+			React.createElement(App)
+		);
+	</script>
+</body>
+
+</html>
