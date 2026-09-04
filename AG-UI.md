@@ -155,7 +155,7 @@ class SimpleAgent extends AbstractAgent {
 }
 ```
 
-### Esempio di usi do un agente
+### Esempio di uso di un agente
 ```
 // Create an agent instance
 const agent = new HttpAgent({
@@ -213,7 +213,7 @@ L'interfaccia per l'interazione con l'utente può essere costruita con i seguent
 15. File upload
 16. Wizard / Stepper
 
-I componenti sno JSON con queste proprietà:
+I componenti sono JSON con queste proprietà:
 |Proprietà|Descrizione|
 |--|--|
 |`type`|Valore fisso `component`|
