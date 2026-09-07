@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant User as Utente
+    box lightblue Front-end
+    participant App as App (A2UI renderer)
+    end
+    box lavender Back-end
+    participant Agent as A2A agent (Python)
+    participant Gemini as Gemini API (LLM)
+    end
+
+    User->>App: Interagisce
+    App->>Agent: ClientToServerMessage
+    Agent->>Gemini: Interroga l'LLM
+    Gemini-->>Agent: Genera payload JSON A2UI
+    Agent-->>App: Messaggi JSONL (in streaming)
+    App-->>User: UI aggiornata

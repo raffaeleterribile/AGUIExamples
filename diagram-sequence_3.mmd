@@ -1,0 +1,31 @@
+sequenceDiagram
+    autonumber
+    
+    box lightblue Client
+    participant Client
+    end
+    
+    box lavender Server
+    participant Server
+    end
+
+    Server->>Client: 1. SSE Connection (JSONL Stream)
+    
+    Note over Client: Loop: Client Buffering<br/>• surfaceUpdate<br/>• dataModelUpdate
+    
+    Server->>Client: 3. beginRendering
+    
+    Note over Client: Client-Side Rendering<br/>• Build widget tree<br/>• Resolve data bindings<br/>• Look up widgets in WidgetRegistry
+    
+    Client-->>Server: (UI is rendered)
+    
+    Note over Client: User Interaction
+    
+    Client->>Server: 6. `userAction` (via separate A2A Message)
+    
+    Note over Server: Event Handling<br/>Process event
+    
+    Note over Server: Loop<br/>• surfaceUpdate<br/>• dataModelUpdate
+    
+    Server->>Client: 9. Dynamic Updates (Over original SSE stream)
+    Note over Client: Triggers UI rebuild

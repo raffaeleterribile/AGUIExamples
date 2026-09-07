@@ -1,0 +1,10 @@
+sequenceDiagram
+    participant Renderer as A2UI Renderer
+    participant Agent as A2UI Agent
+
+    Renderer->>Agent: Catalog & instructions
+
+    loop Agentic flow
+        Agent->>Renderer: Data + UI Updates. Function calls.
+        Renderer->>Agent: User input
+    end

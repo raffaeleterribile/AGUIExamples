@@ -1,0 +1,31 @@
+sequenceDiagram
+    autonumber
+    
+    actor User
+    participant Client
+    participant Server
+
+    Server->>Client: createSurface(surfaceId: "main")
+    Server->>Client: updateComponents(surfaceId: "main", components: [...])
+    Server->>Client: updateDataModel(surfaceId: "main", path: "/user", value: "Alice")
+    
+    User->>Client: Interact with UI (e.g. click button)
+    activate Client
+    Client->>Server: action(name: "submit", context: {...})
+    deactivate Client
+    
+    Client-->>Server: (UI is displayed)
+
+    Note over Server,Client: Time passes, user interacts, or new data arrives...
+
+    Server->>Client: 4. updateComponents or updateDataModel (Dynamic Update)
+    activate Client
+    Note over Client: Client re-renders the UI to reflect changes
+    Client-->>Server: (UI is updated)
+    deactivate Client
+
+    Server->>Client: 5. deleteSurface(surfaceId: "main")
+    activate Client
+    Note over Client: Client removes the UI for the "main" surface
+    Client-->>Server: (UI is gone)
+    deactivate Client
