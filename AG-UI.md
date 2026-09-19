@@ -1,5 +1,6 @@
 # AG-UI [(https://docs.ag-ui.com/)](https://docs.ag-ui.com/)
-Github: [https://github.com/ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui)
+Github: [https://github.com/ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui/)
+Dojo: [https://dojo.ag-ui.com/](https://dojo.ag-ui.com/)
 
 AG-UI è un protocollo che consente di costruire applicazioni agenti AI basate sul web con funzionalità avanzate come streaming in tempo reale, gestione dello stato e componenti interattivi dell'UI.  
 L'interfaccia visualizzata all'utente viene controllata dal server ed inviata in tempo reale al client tramite SSE (Server Side Events) via HTTP/HTTPS o webSocket.  
