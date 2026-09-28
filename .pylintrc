@@ -1,0 +1,4 @@
+[FORMAT]
+# Use tabs for indentation.
+indent-string='\t'
+max-line-length=150
