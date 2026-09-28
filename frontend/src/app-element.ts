@@ -1,17 +1,31 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { renderA2UI } from '@a2ui/lit';
 
 interface AGUIBaseEvent {
   type: string;
+  snapshot?: any;
+  state?: any;
+  tool_call_id?: string;
+  delta?: string;
+  content?: string;
   [key: string]: any;
 }
+
+const LAYOUT_ONLY_COMPONENTS = new Set([
+  'Row',
+  'Column',
+  'List',
+  'Tabs',
+  'Modal',
+  'Divider'
+]);
 
 @customElement('app-element')
 export class AppElement extends LitElement {
   @state() private supportedComponents: string[] = [];
   @state() private selectedComponent: string = '';
-  @state() private isConnected = false;
+  @state() private isWsConnected = false;
+  @state() private reconnectAttempts = 0;
 
   @state() private streamingToolCallId: string | null = null;
   @state() private streamingArgsAccumulator: string = '';
@@ -19,7 +33,12 @@ export class AppElement extends LitElement {
   @state() private currentA2UISpec: any = null;
   @state() private surfaceDeletedMessage: string | null = null;
 
-  private eventSource: EventSource | null = null;
+  private socket: WebSocket | null = null;
+  private reconnectTimer: number | null = null;
+  private isIntentionallyClosed = false;
+
+  private readonly maxReconnectInterval = 30000;
+  private readonly baseReconnectInterval = 1000;
 
   static styles = css`
     :host {
@@ -72,6 +91,7 @@ export class AppElement extends LitElement {
     }
     .status.online { background: #dcfce7; color: #166534; }
     .status.offline { background: #fee2e2; color: #991b1b; }
+    .status.reconnecting { background: #fef3c7; color: #92400e; }
 
     select {
       width: 100%;
@@ -120,57 +140,126 @@ export class AppElement extends LitElement {
       margin-bottom: 0.5rem;
       color: #334155;
     }
+
+    .component-preview {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .btn-primary {
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      padding: 0.625rem 1.25rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .input-field {
+      padding: 0.5rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      width: 100%;
+      box-sizing: border-box;
+    }
   `;
 
   connectedCallback() {
     super.connectedCallback();
-    this.initSSE();
+    this.isIntentionallyClosed = false;
+    this.initWebSocket();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    this.eventSource?.close();
+    this.isIntentionallyClosed = true;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.socket?.close();
   }
 
-  private initSSE() {
-    this.eventSource = new EventSource('http://localhost:8000/streaming');
+  private initWebSocket() {
+    if (this.socket) {
+      this.socket.onopen = null;
+      this.socket.onmessage = null;
+      this.socket.onclose = null;
+      this.socket.onerror = null;
+      this.socket.close();
+    }
 
-    this.eventSource.onopen = () => {
-      this.isConnected = true;
+    this.socket = new WebSocket('ws://localhost:8000/ws');
+
+    this.socket.onopen = () => {
+      console.log('[WebSocket] Connesso al server');
+      this.isWsConnected = true;
+      this.reconnectAttempts = 0;
     };
 
-    this.eventSource.onmessage = (e) => {
+    this.socket.onmessage = (event) => {
       try {
-        const event: AGUIBaseEvent = JSON.parse(e.data);
-        this.lastAGUIEvent = event;
-        this.processAGUIEvent(event);
+        const aguiEvent: AGUIBaseEvent = JSON.parse(event.data);
+        this.lastAGUIEvent = aguiEvent;
+        this.processAGUIEvent(aguiEvent);
       } catch (err) {
-        console.error('Errore durante la decodifica dell'evento SSE:', err);
+        console.error('[WebSocket] Errore decodifica messaggio:', err);
       }
     };
 
-    this.eventSource.onerror = () => {
-      this.isConnected = false;
+    this.socket.onclose = () => {
+      this.isWsConnected = false;
+      if (!this.isIntentionallyClosed) {
+        this.scheduleReconnect();
+      }
     };
+
+    this.socket.onerror = (error) => {
+      console.error('[WebSocket] Errore di rete:', error);
+      this.isWsConnected = false;
+    };
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer !== null) return;
+
+    this.reconnectAttempts++;
+    const expDelay = Math.min(
+      this.maxReconnectInterval,
+      this.baseReconnectInterval * Math.pow(2, this.reconnectAttempts - 1)
+    );
+    const jitter = expDelay * 0.2 * (Math.random() - 0.5);
+    const delay = Math.max(1000, Math.floor(expDelay + jitter));
+
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.initWebSocket();
+    }, delay);
   }
 
   private processAGUIEvent(event: AGUIBaseEvent) {
     switch (event.type) {
       case 'STATE_SNAPSHOT':
-        if (event.state?.supportedComponents) {
-          this.supportedComponents = event.state.supportedComponents;
+        const componentsList = event.snapshot?.supportedComponents || event.state?.supportedComponents;
+        if (componentsList) {
+          this.supportedComponents = componentsList;
         }
         break;
 
       case 'TOOL_CALL_START':
-        this.streamingToolCallId = event.call_id;
+        // Mappatura corretta con tool_call_id
+        this.streamingToolCallId = event.tool_call_id || event.call_id;
         this.streamingArgsAccumulator = '';
         this.surfaceDeletedMessage = null;
         break;
 
       case 'TOOL_CALL_ARGS':
-        if (event.call_id === this.streamingToolCallId) {
-          this.streamingArgsAccumulator += event.args_chunk;
+        // Mappatura corretta: estrae event.delta e verifica tool_call_id
+        const incomingCallId = event.tool_call_id || event.call_id;
+        if (incomingCallId === this.streamingToolCallId && event.delta) {
+          this.streamingArgsAccumulator += event.delta;
         }
         break;
 
@@ -179,46 +268,50 @@ export class AppElement extends LitElement {
         break;
 
       case 'TOOL_CALL_RESULT':
-        const res = event.result;
-        
-        // Gestione DeleteSurfaceMessage (schema A2UI v0.9.1 server_to_client)
+        // Mappatura corretta: parsing del payload contenuto in event.content
+        let res: any = null;
+        try {
+          res = typeof event.content === 'string' ? JSON.parse(event.content) : event.result;
+        } catch (e) {
+          console.error("Errore nel parsing del contenuto di ToolCallResultEvent", e);
+        }
+
         if (res?.deleteSurface) {
           this.currentA2UISpec = null;
-          this.surfaceDeletedMessage = `Superficie "${res.deleteSurface.surfaceId}" azzerata (DeleteSurfaceMessage A2UI v0.9.1). Componente non supportato.`;
-        } 
-        // Gestione SurfaceUpdateMessage (schema A2UI v0.9.1 server_to_client)
-        else if (res?.surfaceUpdate) {
+          this.surfaceDeletedMessage = `Superficie "${res.deleteSurface.surfaceId}" azzerata (DeleteSurfaceMessage A2UI). Componente non supportato.`;
+        } else if (res?.surfaceUpdate) {
           this.surfaceDeletedMessage = null;
-          this.currentA2UISpec = res;
+          this.currentA2UISpec = res.surfaceUpdate;
         }
         break;
     }
   }
 
-  private async onSelectComponent(e: Event) {
+  private onSelectComponent(e: Event) {
     const val = (e.target as HTMLSelectElement).value;
-    if (!val) return;
+    if (!val || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
 
     this.selectedComponent = val;
-    this.currentA2UISpec = null;
-    this.surfaceDeletedMessage = null;
 
-    await fetch('http://localhost:8000/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ component: val })
-    });
+    if (LAYOUT_ONLY_COMPONENTS.has(val)) {
+      this.currentA2UISpec = null;
+      this.surfaceDeletedMessage = null;
+      this.streamingArgsAccumulator = '';
+    } else {
+      this.currentA2UISpec = null;
+      this.surfaceDeletedMessage = null;
+    }
+
+    this.socket.send(JSON.stringify({ component: val }));
   }
 
-  /**
-   * Handler di dispatch per i messaggi Client-to-Server A2UI (client_to_server.json)
-   * Genera un messaggio di tipo 'action' e lo trasmette al backend.
-   */
-  private async dispatchA2UIAction(actionName: string, componentId: string, payload: any = {}) {
+  private dispatchA2UIAction(actionName: string, componentId: string, payload: any = {}) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+
     const clientActionMessage = {
-      v: "0.9.1",
+      v: '1.0',
       action: {
-        surfaceId: "functionCall",
+        surfaceId: 'functionCall',
         componentId: componentId,
         actionName: actionName,
         payload: payload,
@@ -226,23 +319,176 @@ export class AppElement extends LitElement {
       }
     };
 
-    await fetch('http://localhost:8000/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ a2uiAction: clientActionMessage })
-    });
+    this.socket.send(JSON.stringify({ a2uiAction: clientActionMessage }));
   }
 
-  private handleA2UINativeInteraction(e: CustomEvent) {
-    // Intercetta eventi generati dal renderer A2UI
-    const detail = e.detail || {};
-    this.dispatchA2UIAction(detail.actionName || 'USER_INTERACTION', detail.componentId || 'a2ui-comp', detail);
+  private renderA2UIComponent(comp: any) {
+    if (!comp) return html``;
+
+    const props = comp.properties || {};
+    const compType = comp.component || comp.type;
+
+    switch (compType) {
+      case 'Button':
+        return html`
+          <button 
+            class="btn-primary"
+            @click=${() => this.dispatchA2UIAction(props.action?.name || 'CLICK', comp.id, props.action?.parameters)}>
+            ${props.child || 'Pulsante'}
+          </button>
+        `;
+
+      case 'Text':
+        return html`<p style="margin:0;">${props.text || props.content}</p>`;
+
+      case 'Image':
+        return html`
+          <img 
+            src=${props.url || props.src} 
+            alt=${props.description || props.alt || ''} 
+            style="max-width: 100%; border-radius: 4px;" 
+          />
+        `;
+
+      case 'Video':
+        return html`
+          <video controls poster=${props.posterUrl || ''} style="width: 100%; max-width: 400px;">
+            <source src=${props.url} type="video/mp4" />
+            Il browser non supporta la riproduzione video.
+          </video>
+        `;
+
+      case 'AudioPlayer':
+        return html`
+          <div>
+            ${props.description ? html`<p style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">${props.description}</p>` : ''}
+            <audio controls src=${props.url} style="width: 100%;"></audio>
+          </div>
+        `;
+
+      case 'Icon':
+        return html`
+          <span style="font-size: 1.5rem; display: inline-block;">
+            📍 [Icona: ${props.name}]
+          </span>
+        `;
+
+      case 'TextField':
+        return html`
+          <div>
+            <label>${props.label}</label>
+            <input 
+              type=${props.variant === 'number' ? 'number' : 'text'} 
+              class="input-field" 
+              placeholder=${props.placeholder || ''} 
+              .value=${props.value || ''}
+              @change=${(e: Event) => this.dispatchA2UIAction('INPUT_CHANGED', comp.id, { value: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+        `;
+
+      case 'CheckBox':
+        return html`
+          <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+            <input 
+              type="checkbox" 
+              ?checked=${Boolean(props.value)}
+              @change=${(e: Event) => this.dispatchA2UIAction('TOGGLE_CHECKBOX', comp.id, { checked: (e.target as HTMLInputElement).checked })}
+            />
+            ${props.label}
+          </label>
+        `;
+
+      case 'ChoicePicker':
+        return html`
+          <div>
+            <label>${props.label}</label>
+            ${(props.options || []).map((opt: any) => html`
+              <label style="display: block; font-weight: normal; margin-bottom: 0.25rem;">
+                <input 
+                  type="radio" 
+                  name=${comp.id} 
+                  value=${opt.value} 
+                  ?checked=${Array.isArray(props.value) ? props.value.includes(opt.value) : props.value === opt.value}
+                  @change=${() => this.dispatchA2UIAction('CHANGE_SELECTION', comp.id, { selected: opt.value })}
+                />
+                ${opt.label}
+              </label>
+            `)}
+          </div>
+        `;
+
+      case 'Card':
+        return html`
+          <div style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 1rem; background: #ffffff;">
+            <p style="margin:0; font-weight: 600;">[Card Container: ID figlio ${props.child}]</p>
+          </div>
+        `;
+
+      case 'Slider':
+        return html`
+          <div>
+            <label>${props.label}: ${props.value}</label>
+            <input 
+              type="range" 
+              min=${props.min || 0} 
+              max=${props.max || 100} 
+              .value=${props.value || 0}
+              @change=${(e: Event) => this.dispatchA2UIAction('UPDATE_SLIDER', comp.id, { value: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+        `;
+
+      case 'DateTimeInput':
+        return html`
+          <div>
+            <label>${props.label}</label>
+            <input 
+              type="datetime-local" 
+              class="input-field"
+              .value=${props.value || ''}
+              @change=${(e: Event) => this.dispatchA2UIAction('UPDATE_DATETIME', comp.id, { value: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+        `;
+
+      default:
+        return html`<pre>${JSON.stringify(comp, null, 2)}</pre>`;
+    }
+  }
+
+  private renderA2UISurface() {
+    if (LAYOUT_ONLY_COMPONENTS.has(this.selectedComponent)) {
+      return html`<p style="color: #64748b; text-align: center; font-style: italic;">
+        Componente di Layout ("${this.selectedComponent}"). Nessun elemento grafico diretto da renderizzare.
+      </p>`;
+    }
+
+    if (!this.currentA2UISpec || !this.currentA2UISpec.components) {
+      return html`<p style="color: #94a3b8; text-align: center;">Nessun componente renderizzato.</p>`;
+    }
+
+    return html`
+      <div class="component-preview">
+        ${this.currentA2UISpec.components.map((c: any) => this.renderA2UIComponent(c))}
+      </div>
+    `;
+  }
+
+  private renderStatusBadge() {
+    if (this.isWsConnected) {
+      return html`<span class="status online">Connesso</span>`;
+    }
+    if (this.reconnectAttempts > 0) {
+      return html`<span class="status reconnecting">Riconnessione... (#${this.reconnectAttempts})</span>`;
+    }
+    return html`<span class="status offline">Disconnesso</span>`;
   }
 
   render() {
     return html`
       <div class="header">
-        <h2>Integrazione Protocolli AG-UI & A2UI v0.9.1</h2>
+        <h2>Integrazione Full-Stack WebSocket (AG-UI & A2UI)</h2>
       </div>
 
       <div class="container">
@@ -250,22 +496,20 @@ export class AppElement extends LitElement {
         <div class="panel">
           <div class="panel-title">
             <span>sharedState</span>
-            <span class="status ${this.isConnected ? 'online' : 'offline'}">
-              ${this.isConnected ? 'SSE Connesso' : 'Disconnesso'}
-            </span>
+            ${this.renderStatusBadge()}
           </div>
 
-          <label>Seleziona Componente (A2UI Basic Catalog):</label>
-          <select @change=${this.onSelectComponent}>
+          <label>Seleziona Componente (A2UI Basic Catalog - 18 Componenti):</label>
+          <select @change=${this.onSelectComponent} ?disabled=${!this.isWsConnected}>
             <option value="" disabled ?selected=${!this.selectedComponent}>-- Seleziona un componente --</option>
             ${this.supportedComponents.map(
               (c) => html`<option value=${c} ?selected=${this.selectedComponent === c}>${c}</option>`
             )}
           </select>
 
-          <label>Evento AG-UI (Messaggio JSON in tempo reale):</label>
+          <label>Messaggio AG-UI Ricevuto (JSON in Tempo Reale):</label>
           <div class="stream-box">
-            ${this.lastAGUIEvent ? JSON.stringify(this.lastAGUIEvent, null, 2) : 'In attesa di eventi dal server...'}
+            ${this.lastAGUIEvent ? JSON.stringify(this.lastAGUIEvent, null, 2) : 'In attesa di eventi via WebSocket...'}
           </div>
         </div>
 
@@ -275,21 +519,20 @@ export class AppElement extends LitElement {
             <span>functionCall</span>
           </div>
 
-          ${this.streamingArgsAccumulator
+          ${!LAYOUT_ONLY_COMPONENTS.has(this.selectedComponent) && this.streamingArgsAccumulator
             ? html`
-                <label>AG-UI TOOL_CALL_ARGS (Streaming A2UI Payload):</label>
+                <label>AG-UI TOOL_CALL_ARGS (Streaming WS Token):</label>
                 <div class="stream-box">${this.streamingArgsAccumulator}</div>
               `
             : ''}
 
-          <label style="margin-top: 1rem;">Superficie A2UI (A2UI Renderer / DeleteSurface):</label>
+          <label style="margin-top: 1rem;">Superficie A2UI:</label>
 
           ${this.surfaceDeletedMessage
             ? html`<div class="delete-notice">${this.surfaceDeletedMessage}</div>`
             : html`
-                <div class="a2ui-surface" @a2ui-action=${this.handleA2UINativeInteraction}>${this.currentA2UISpec
-                    ? renderA2UI(this.currentA2UISpec)
-                    : html`<p style="color: #94a3b8; text-align: center;">Nessun componente renderizzato.</p>`}
+                <div class="a2ui-surface">
+                  ${this.renderA2UISurface()}
                 </div>
               `}
         </div>
