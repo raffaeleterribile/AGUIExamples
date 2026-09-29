@@ -11,6 +11,8 @@ interface AGUIBaseEvent {
   [key: string]: any;
 }
 
+type StreamingProtocol = 'ws' | 'sse';
+
 const LAYOUT_ONLY_COMPONENTS = new Set([
   'Row',
   'Column',
@@ -22,9 +24,10 @@ const LAYOUT_ONLY_COMPONENTS = new Set([
 
 @customElement('app-element')
 export class AppElement extends LitElement {
+  @state() private protocol: StreamingProtocol = 'ws';
   @state() private supportedComponents: string[] = [];
   @state() private selectedComponent: string = '';
-  @state() private isWsConnected = false;
+  @state() private isConnected = false;
   @state() private reconnectAttempts = 0;
 
   @state() private streamingToolCallId: string | null = null;
@@ -34,8 +37,10 @@ export class AppElement extends LitElement {
   @state() private surfaceDeletedMessage: string | null = null;
 
   private socket: WebSocket | null = null;
+  private eventSource: EventSource | null = null;
   private reconnectTimer: number | null = null;
   private isIntentionallyClosed = false;
+  private sessionId: string = `session_${Math.random().toString(36).substring(2, 9)}`;
 
   private readonly maxReconnectInterval = 30000;
   private readonly baseReconnectInterval = 1000;
@@ -53,6 +58,28 @@ export class AppElement extends LitElement {
     .header {
       text-align: center;
       margin-bottom: 2rem;
+    }
+
+    .protocol-selector {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 1.5rem;
+      background: #ffffff;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      margin: 1rem auto 0 auto;
+      max-width: 400px;
+    }
+
+    .radio-label {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: #334155;
     }
 
     .container {
@@ -169,48 +196,75 @@ export class AppElement extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.isIntentionallyClosed = false;
-    this.initWebSocket();
+    this.connectCurrentProtocol();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.isIntentionallyClosed = true;
+    this.disconnectAll();
+  }
+
+  private switchProtocol(newProtocol: StreamingProtocol) {
+    if (this.protocol === newProtocol) return;
+    
+    console.log(`[Protocol] Cambio modalità da ${this.protocol.toUpperCase()} a${newProtocol.toUpperCase()}`);
+    this.protocol = newProtocol;
+    
+    // Disconnessione e re-inizializzazione
+    this.disconnectAll();
+    this.connectCurrentProtocol();
+  }
+
+  private disconnectAll() {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.socket?.close();
-  }
 
-  private initWebSocket() {
     if (this.socket) {
       this.socket.onopen = null;
       this.socket.onmessage = null;
       this.socket.onclose = null;
       this.socket.onerror = null;
       this.socket.close();
+      this.socket = null;
     }
 
+    if (this.eventSource) {
+      this.eventSource.onopen = null;
+      this.eventSource.onmessage = null;
+      this.eventSource.onerror = null;
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+
+    this.isConnected = false;
+  }
+
+  private connectCurrentProtocol() {
+    if (this.protocol === 'ws') {
+      this.initWebSocket();
+    } else {
+      this.initSSE();
+    }
+  }
+
+  private initWebSocket() {
     this.socket = new WebSocket('ws://localhost:8000/ws');
 
     this.socket.onopen = () => {
       console.log('[WebSocket] Connesso al server');
-      this.isWsConnected = true;
+      this.isConnected = true;
       this.reconnectAttempts = 0;
     };
 
     this.socket.onmessage = (event) => {
-      try {
-        const aguiEvent: AGUIBaseEvent = JSON.parse(event.data);
-        this.lastAGUIEvent = aguiEvent;
-        this.processAGUIEvent(aguiEvent);
-      } catch (err) {
-        console.error('[WebSocket] Errore decodifica messaggio:', err);
-      }
+      this.handleIncomingEvent(event.data);
     };
 
     this.socket.onclose = () => {
-      this.isWsConnected = false;
+      this.isConnected = false;
       if (!this.isIntentionallyClosed) {
         this.scheduleReconnect();
       }
@@ -218,7 +272,31 @@ export class AppElement extends LitElement {
 
     this.socket.onerror = (error) => {
       console.error('[WebSocket] Errore di rete:', error);
-      this.isWsConnected = false;
+      this.isConnected = false;
+    };
+  }
+
+  private initSSE() {
+    const sseUrl = `http://localhost:8000/streaming?session_id=${this.sessionId}`;
+    this.eventSource = new EventSource(sseUrl);
+
+    this.eventSource.onopen = () => {
+      console.log('[SSE] Stream connesso con session_id:', this.sessionId);
+      this.isConnected = true;
+      this.reconnectAttempts = 0;
+    };
+
+    this.eventSource.onmessage = (event) => {
+      this.handleIncomingEvent(event.data);
+    };
+
+    this.eventSource.onerror = (error) => {
+      console.error('[SSE] Errore connessione stream:', error);
+      this.isConnected = false;
+      this.eventSource?.close();
+      if (!this.isIntentionallyClosed) {
+        this.scheduleReconnect();
+      }
     };
   }
 
@@ -235,8 +313,18 @@ export class AppElement extends LitElement {
 
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
-      this.initWebSocket();
+      this.connectCurrentProtocol();
     }, delay);
+  }
+
+  private handleIncomingEvent(rawData: string) {
+    try {
+      const aguiEvent: AGUIBaseEvent = JSON.parse(rawData);
+      this.lastAGUIEvent = aguiEvent;
+      this.processAGUIEvent(aguiEvent);
+    } catch (err) {
+      console.error('[Protocol] Errore decodifica evento:', err);
+    }
   }
 
   private processAGUIEvent(event: AGUIBaseEvent) {
@@ -249,14 +337,12 @@ export class AppElement extends LitElement {
         break;
 
       case 'TOOL_CALL_START':
-        // Mappatura corretta con tool_call_id
         this.streamingToolCallId = event.tool_call_id || event.call_id;
         this.streamingArgsAccumulator = '';
         this.surfaceDeletedMessage = null;
         break;
 
       case 'TOOL_CALL_ARGS':
-        // Mappatura corretta: estrae event.delta e verifica tool_call_id
         const incomingCallId = event.tool_call_id || event.call_id;
         if (incomingCallId === this.streamingToolCallId && event.delta) {
           this.streamingArgsAccumulator += event.delta;
@@ -268,7 +354,6 @@ export class AppElement extends LitElement {
         break;
 
       case 'TOOL_CALL_RESULT':
-        // Mappatura corretta: parsing del payload contenuto in event.content
         let res: any = null;
         try {
           res = typeof event.content === 'string' ? JSON.parse(event.content) : event.result;
@@ -287,9 +372,30 @@ export class AppElement extends LitElement {
     }
   }
 
+  private async sendPayload(payload: any) {
+    if (!this.isConnected) return;
+
+    if (this.protocol === 'ws') {
+      this.socket?.send(JSON.stringify(payload));
+    } else {
+      try {
+        await fetch('http://localhost:8000/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...payload,
+            session_id: this.sessionId
+          })
+        });
+      } catch (err) {
+        console.error('[SSE POST /action] Errore di invio:', err);
+      }
+    }
+  }
+
   private onSelectComponent(e: Event) {
     const val = (e.target as HTMLSelectElement).value;
-    if (!val || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    if (!val) return;
 
     this.selectedComponent = val;
 
@@ -302,12 +408,10 @@ export class AppElement extends LitElement {
       this.surfaceDeletedMessage = null;
     }
 
-    this.socket.send(JSON.stringify({ component: val }));
+    this.sendPayload({ component: val });
   }
 
   private dispatchA2UIAction(actionName: string, componentId: string, payload: any = {}) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-
     const clientActionMessage = {
       v: '1.0',
       action: {
@@ -319,7 +423,7 @@ export class AppElement extends LitElement {
       }
     };
 
-    this.socket.send(JSON.stringify({ a2uiAction: clientActionMessage }));
+    this.sendPayload({ a2uiAction: clientActionMessage });
   }
 
   private renderA2UIComponent(comp: any) {
@@ -476,8 +580,8 @@ export class AppElement extends LitElement {
   }
 
   private renderStatusBadge() {
-    if (this.isWsConnected) {
-      return html`<span class="status online">Connesso</span>`;
+    if (this.isConnected) {
+      return html`<span class="status online">Connesso (${this.protocol.toUpperCase()})</span>`;
     }
     if (this.reconnectAttempts > 0) {
       return html`<span class="status reconnecting">Riconnessione... (#${this.reconnectAttempts})</span>`;
@@ -488,7 +592,31 @@ export class AppElement extends LitElement {
   render() {
     return html`
       <div class="header">
-        <h2>Integrazione Full-Stack WebSocket (AG-UI & A2UI)</h2>
+        <h2>Integrazione Full-Stack Stream (AG-UI & A2UI)</h2>
+        
+        <!-- Selezione Modalità di Streaming (Mutualmente Esclusive) -->
+        <div class="protocol-selector">
+          <label class="radio-label">
+            <input 
+              type="radio" 
+              name="protocol" 
+              value="ws" 
+              ?checked=${this.protocol === 'ws'}
+              @change=${() => this.switchProtocol('ws')}
+            />
+            WebSocket (WS)
+          </label>
+          <label class="radio-label">
+            <input 
+              type="radio" 
+              name="protocol" 
+              value="sse" 
+              ?checked=${this.protocol === 'sse'}
+              @change=${() => this.switchProtocol('sse')}
+            />
+            Server-Sent Events (SSE)
+          </label>
+        </div>
       </div>
 
       <div class="container">
@@ -500,16 +628,16 @@ export class AppElement extends LitElement {
           </div>
 
           <label>Seleziona Componente (A2UI Basic Catalog - 18 Componenti):</label>
-          <select @change=${this.onSelectComponent} ?disabled=${!this.isWsConnected}>
+          <select @change=${this.onSelectComponent} ?disabled=${!this.isConnected}>
             <option value="" disabled ?selected=${!this.selectedComponent}>-- Seleziona un componente --</option>
             ${this.supportedComponents.map(
               (c) => html`<option value=${c} ?selected=${this.selectedComponent === c}>${c}</option>`
             )}
           </select>
 
-          <label>Messaggio AG-UI Ricevuto (JSON in Tempo Reale):</label>
+          <label>Messaggio AG-UI Ricevuto (JSON in Tempo Reale via ${this.protocol.toUpperCase()}):</label>
           <div class="stream-box">
-            ${this.lastAGUIEvent ? JSON.stringify(this.lastAGUIEvent, null, 2) : 'In attesa di eventi via WebSocket...'}
+            ${this.lastAGUIEvent ? JSON.stringify(this.lastAGUIEvent, null, 2) : 'In attesa di eventi dallo stream...'}
           </div>
         </div>
 
@@ -521,7 +649,7 @@ export class AppElement extends LitElement {
 
           ${!LAYOUT_ONLY_COMPONENTS.has(this.selectedComponent) && this.streamingArgsAccumulator
             ? html`
-                <label>AG-UI TOOL_CALL_ARGS (Streaming WS Token):</label>
+                <label>AG-UI TOOL_CALL_ARGS (Streaming Token):</label>
                 <div class="stream-box">${this.streamingArgsAccumulator}</div>
               `
             : ''}
