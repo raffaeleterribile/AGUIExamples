@@ -1,3 +1,13 @@
+"""
+Server FastAPI per la gestione di connessioni WebSocket e SSE, con catalogo componenti A2UI e logica centralizzata per eventi AG-UI.
+
+Questo modulo definisce:
+- L'app FastAPI con middleware CORS.
+- La gestione delle connessioni WebSocket attive.
+- Le code per Server-Sent Events (SSE).
+- Il catalogo completo dei componenti A2UI.
+"""
+
 import asyncio
 import json
 import uuid
@@ -246,7 +256,7 @@ async def generate_component_events(component_name: str) -> AsyncGenerator[Any, 
 	a2ui_str = json.dumps(a2ui_message)
 
 	yield ToolCallStartEvent(tool_call_id=tool_call_id, tool_call_name=tool_name)
-	
+
 	chunk_size = 15
 	for i in range(0, len(a2ui_str), chunk_size):
 		chunk = a2ui_str[i:i + chunk_size]
@@ -275,6 +285,7 @@ def create_action_ack_event(a2ui_action: dict) -> CustomEvent:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+	"""Endpoint WebSocket per la comunicazione bidirezionale con il client AG-UI."""
 	await websocket.accept()
 	active_ws_connections.add(websocket)
 
@@ -310,7 +321,7 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/streaming")
 async def sse_streaming_endpoint(request: Request, session_id: str = "default"):
 	"""Endpoint SSE che trasmette lo stream continuo di eventi AG-UI al client."""
-	
+
 	async def event_publisher():
 		queue = asyncio.Queue()
 		sse_queues[session_id] = queue
@@ -324,7 +335,7 @@ async def sse_streaming_endpoint(request: Request, session_id: str = "default"):
 				# Se la connessione client è interrotta, interrompe il loop
 				if await request.is_disconnected():
 					break
-				
+
 				# Attesa prossimo evento dalla coda
 				try:
 					event = await asyncio.wait_for(queue.get(), timeout=1.0)
@@ -339,7 +350,7 @@ async def sse_streaming_endpoint(request: Request, session_id: str = "default"):
 			sse_queues.pop(session_id, None)
 
 	return StreamingResponse(
-		event_publisher(), 
+		event_publisher(),
 		media_type="text/event-stream",
 		headers={
 			"Cache-Control": "no-cache",
