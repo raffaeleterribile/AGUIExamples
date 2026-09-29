@@ -27,7 +27,7 @@ export class AppElement extends LitElement {
   @state() private protocol: StreamingProtocol = 'ws';
   @state() private supportedComponents: string[] = [];
   @state() private selectedComponent: string = '';
-  @state() private isConnected = false;
+  @state() private isStreamConnected = false;
   @state() private reconnectAttempts = 0;
 
   @state() private streamingToolCallId: string | null = null;
@@ -211,7 +211,6 @@ export class AppElement extends LitElement {
 	console.log(`[Protocol] Cambio modalità da ${this.protocol.toUpperCase()} a${newProtocol.toUpperCase()}`);
 	this.protocol = newProtocol;
 	
-	// Disconnessione e re-inizializzazione
 	this.disconnectAll();
 	this.connectCurrentProtocol();
   }
@@ -239,7 +238,7 @@ export class AppElement extends LitElement {
 	  this.eventSource = null;
 	}
 
-	this.isConnected = false;
+	this.isStreamConnected = false;
   }
 
   private connectCurrentProtocol() {
@@ -255,7 +254,7 @@ export class AppElement extends LitElement {
 
 	this.socket.onopen = () => {
 	  console.log('[WebSocket] Connesso al server');
-	  this.isConnected = true;
+	  this.isStreamConnected = true;
 	  this.reconnectAttempts = 0;
 	};
 
@@ -264,7 +263,7 @@ export class AppElement extends LitElement {
 	};
 
 	this.socket.onclose = () => {
-	  this.isConnected = false;
+	  this.isStreamConnected = false;
 	  if (!this.isIntentionallyClosed) {
 		this.scheduleReconnect();
 	  }
@@ -272,7 +271,7 @@ export class AppElement extends LitElement {
 
 	this.socket.onerror = (error) => {
 	  console.error('[WebSocket] Errore di rete:', error);
-	  this.isConnected = false;
+	  this.isStreamConnected = false;
 	};
   }
 
@@ -282,7 +281,7 @@ export class AppElement extends LitElement {
 
 	this.eventSource.onopen = () => {
 	  console.log('[SSE] Stream connesso con session_id:', this.sessionId);
-	  this.isConnected = true;
+	  this.isStreamConnected = true;
 	  this.reconnectAttempts = 0;
 	};
 
@@ -292,7 +291,7 @@ export class AppElement extends LitElement {
 
 	this.eventSource.onerror = (error) => {
 	  console.error('[SSE] Errore connessione stream:', error);
-	  this.isConnected = false;
+	  this.isStreamConnected = false;
 	  this.eventSource?.close();
 	  if (!this.isIntentionallyClosed) {
 		this.scheduleReconnect();
@@ -373,7 +372,7 @@ export class AppElement extends LitElement {
   }
 
   private async sendPayload(payload: any) {
-	if (!this.isConnected) return;
+	if (!this.isStreamConnected) return;
 
 	if (this.protocol === 'ws') {
 	  this.socket?.send(JSON.stringify(payload));
@@ -580,7 +579,7 @@ export class AppElement extends LitElement {
   }
 
   private renderStatusBadge() {
-	if (this.isConnected) {
+	if (this.isStreamConnected) {
 	  return html`<span class="status online">Connesso (${this.protocol.toUpperCase()})</span>`;
 	}
 	if (this.reconnectAttempts > 0) {
@@ -594,7 +593,6 @@ export class AppElement extends LitElement {
 	  <div class="header">
 		<h2>Integrazione Full-Stack Stream (AG-UI & A2UI)</h2>
 		
-		<!-- Selezione Modalità di Streaming (Mutualmente Esclusive) -->
 		<div class="protocol-selector">
 		  <label class="radio-label">
 			<input 
@@ -628,7 +626,7 @@ export class AppElement extends LitElement {
 		  </div>
 
 		  <label>Seleziona Componente (A2UI Basic Catalog - 18 Componenti):</label>
-		  <select @change=${this.onSelectComponent} ?disabled=${!this.isConnected}>
+		  <select @change=${this.onSelectComponent} ?disabled=${!this.isStreamConnected}>
 			<option value="" disabled ?selected=${!this.selectedComponent}>-- Seleziona un componente --</option>
 			${this.supportedComponents.map(
 			  (c) => html`<option value=${c} ?selected=${this.selectedComponent === c}>${c}</option>`
