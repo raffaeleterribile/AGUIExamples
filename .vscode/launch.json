@@ -16,8 +16,8 @@
 			"justMyCode": true
 		},
 		{
-			"name": "Frontend (Chrome)",
-			"type": "chrome",
+			"name": "Frontend (Edge)",
+			"type": "msedge",
 			"request": "launch",
 			"url": "http://localhost:5173",
 			"webRoot": "${workspaceFolder}/frontend",
@@ -29,7 +29,7 @@
 			"name": "Full Stack (Backend + Frontend)",
 			"configurations": [
 				"Backend (FastAPI)",
-				"Frontend (Chrome)"
+				"Frontend (Edge)"
 			],
 			"stopAll": true
 		}
